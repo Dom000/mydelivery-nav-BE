@@ -80,15 +80,17 @@ model Delivery {
 }
 
 model Route {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  deliveryId  String   @unique @db.ObjectId
-  delivery    Delivery @relation(fields: [deliveryId], references: [id])
-  origin      String
-  destination String
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  deliveryId   String   @unique @db.ObjectId
+  delivery     Delivery @relation(fields: [deliveryId], references: [id])
+  origin       String
+  destination  String
   /// Detailed route points. JSON array of objects: [{ label: 'A', coords: [lat, lng], durationToNext: 120 }, ...]
   /// The last point is the destination and may omit `durationToNext`.
-  points      Json
-  distance    Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  points       Json
+  /// Current active point (or midpoint) used to simulate progress. Stored as JSON object { between: [labelFrom,labelTo], coords: [lat,lng], indexFrom: Int, indexTo: Int }
+  currentPoint Json?
+  distance     Float
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

@@ -5,3 +5,12 @@ export interface RoutePoint {
 }
 
 export type RoutePoints = RoutePoint[];
+
+export interface ActivePoint {
+  between?: [string, string];
+  coords: [number, number];
+  indexFrom?: number;
+  indexTo?: number;
+}
+
+export type ActivePointOrNull = ActivePoint | null;

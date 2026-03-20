@@ -6,16 +6,20 @@ import {
   Patch,
   Param,
   Delete,
+  UseGuards,
 } from '@nestjs/common';
 import { PackageService } from './package.service';
 import { CreatePackageDto } from './dto/create-package.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
 import { Admin } from 'src/auth/decorators/admin.decorator';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { RolesGuard } from 'src/auth/roles.guard';
 
 @Controller('package')
 export class PackageController {
   constructor(private readonly packageService: PackageService) {}
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Admin()
   @Post()
   create(@Body() createPackageDto: CreatePackageDto) {

@@ -9,6 +9,7 @@ import prisma from '../prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { EmailService } from '../email/email.service';
 import { Role } from '@prisma/client';
+import { ref } from 'process';
 
 export interface AccessTokenPayload {
   id: string;
@@ -100,7 +101,6 @@ export class AuthService {
 
     const accessExpires = process.env.JWT_ACCESS_EXPIRES_IN || '7d';
     const refreshExpires = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
-    const adminExpires = process.env.JWT_ADMIN_EXPIRES_IN || '30d';
 
     const access_token = this.jwtService.sign(payload, {
       expiresIn: accessExpires as any,
@@ -113,18 +113,8 @@ export class AuthService {
       access_token,
       refresh_token,
       expires_in: accessExpires,
+      refresh_expires_in: refreshExpires,
     };
-
-    // Issue an additional long-lived token for admins if desired
-    if (
-      user.role === 'ADMIN' ||
-      (user.role && String(user.role).toUpperCase() === 'ADMIN')
-    ) {
-      result.admin_token = this.jwtService.sign(payload, {
-        expiresIn: adminExpires as any,
-      });
-      result.admin_expires_in = adminExpires;
-    }
 
     return result;
   }

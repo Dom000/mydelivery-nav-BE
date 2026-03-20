@@ -3,6 +3,7 @@ import logger from '../utils/logger';
 import { CreatePackageDto } from './dto/create-package.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
 import { validateRoutePoints } from '../types/schema';
+import { initialActivePointFromPoints } from '../utils/geo';
 import prisma from '../prisma/client';
 
 @Injectable()
@@ -69,6 +70,10 @@ export class PackageService {
         origin: createPackageDto.route.origin,
         destination: createPackageDto.route.destination,
         points: createPackageDto.route.points as any,
+        // set an initial `currentPoint` (midpoint between first two points or first point)
+        currentPoint: initialActivePointFromPoints(
+          createPackageDto.route.points as any,
+        ) as any,
         distance: createPackageDto.route.distance,
       },
     });

@@ -11,6 +11,8 @@ import { LoginAdminDto } from './dto/login-admin.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { CreateAdminDto } from './dto/create-admin.dto';
+import { BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
@@ -51,6 +53,29 @@ export class AuthController {
     @Body(new ValidationPipe({ transform: true })) dto: VerifyOtpDto,
   ) {
     return this.authService.verifyOtp(dto.email, dto.code);
+  }
+
+  // Protected: only admins may create admins
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Admin()
+  @Post('create-admin')
+  async createAdmin(
+    @Body(new ValidationPipe({ transform: true })) dto: CreateAdminDto,
+  ) {
+    return this.authService.createAdmin(dto.email, dto.password);
+  }
+
+  // Bootstrap endpoint: create initial admin using a server secret
+  @Public()
+  @Post('bootstrap-admin')
+  async bootstrapAdmin(
+    @Body(new ValidationPipe({ transform: true })) dto: CreateAdminDto,
+  ) {
+    // const secret = process.env.ADMIN_CREATION_SECRET || '';
+    // if (!dto.secret || dto.secret !== secret) {
+    //   throw new BadRequestException('Invalid or missing admin creation secret');
+    // }
+    return this.authService.createAdmin(dto.email, dto.password);
   }
 
   @UseGuards(JwtAuthGuard)

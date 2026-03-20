@@ -8,14 +8,13 @@ import { JwtService } from '@nestjs/jwt';
 import prisma from '../prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { EmailService } from '../email/email.service';
+import { Role } from '@prisma/client';
 
 export interface AccessTokenPayload {
   id: string;
   iss: string;
   sub: string;
   aud: string[];
-  exp?: number;
-  iat?: number;
   azp: string;
   scope: string;
   roles?: string[];
@@ -99,7 +98,35 @@ export class AuthService {
       permissions: user.permissions || [],
     };
 
-    return { access_token: this.jwtService.sign(payload) };
+    const accessExpires = process.env.JWT_ACCESS_EXPIRES_IN || '7d';
+    const refreshExpires = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
+    const adminExpires = process.env.JWT_ADMIN_EXPIRES_IN || '30d';
+
+    const access_token = this.jwtService.sign(payload, {
+      expiresIn: accessExpires as any,
+    });
+    const refresh_token = this.jwtService.sign(payload, {
+      expiresIn: refreshExpires as any,
+    });
+
+    const result: any = {
+      access_token,
+      refresh_token,
+      expires_in: accessExpires,
+    };
+
+    // Issue an additional long-lived token for admins if desired
+    if (
+      user.role === 'ADMIN' ||
+      (user.role && String(user.role).toUpperCase() === 'ADMIN')
+    ) {
+      result.admin_token = this.jwtService.sign(payload, {
+        expiresIn: adminExpires as any,
+      });
+      result.admin_expires_in = adminExpires;
+    }
+
+    return result;
   }
 
   async adminLogin(email: string, password: string) {
@@ -114,8 +141,31 @@ export class AuthService {
     const match = await bcrypt.compare(password, user.password);
     if (!match) throw new UnauthorizedException('Invalid credentials');
 
-    if (user.role !== 'admin') throw new UnauthorizedException('Not an admin');
+    if (user.role !== Role.ADMIN)
+      throw new UnauthorizedException('Not an admin');
 
     return this.login(user);
+  }
+
+  async createAdmin(email: string, password: string) {
+    if (!email || !password)
+      throw new BadRequestException('email and password are required');
+
+    const existing = await prisma.user.findFirst({ where: { email } });
+    if (existing) throw new BadRequestException('User already exists');
+
+    const hash = await bcrypt.hash(password, 10);
+
+    const created = await prisma.user.create({
+      data: {
+        email,
+        password: hash,
+        role: Role.ADMIN,
+        permissions: [],
+        name: email.split('@')[0],
+      } as any,
+    });
+
+    return { id: created.id, email: created.email, role: created.role };
   }
 }

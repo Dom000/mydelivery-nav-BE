@@ -81,6 +81,39 @@ export class PackageService {
     return pkg;
   }
 
+  async findAllDeliveries() {
+    const deliveries = await prisma.delivery.findMany({
+      include: {
+        package: { include: { owner: true } },
+        routes: true,
+        driver: true,
+      },
+    });
+
+    return deliveries.map((d) => ({
+      id: String(d.id).toUpperCase(),
+      status: d.status,
+      package: d.package
+        ? {
+            id: String(d.package.id).toUpperCase(),
+            name: d.package.name,
+            weight: d.package.weight,
+            destination: d.routes?.destination ?? null,
+            owner: d.package.owner
+              ? {
+                  id: String(d.package.owner.id).toUpperCase(),
+                  name: d.package.owner.name,
+                  email: d.package.owner.email,
+                }
+              : null,
+          }
+        : null,
+      driver: d.driver
+        ? { id: String(d.driver.id).toUpperCase(), name: d.driver.name }
+        : null,
+    }));
+  }
+
   async findAll() {
     return prisma.package
       .findMany({

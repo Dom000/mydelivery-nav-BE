@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import prisma from '../prisma/client';
 import {
   lineString,
@@ -9,20 +9,30 @@ import {
 } from '@turf/turf';
 import { fromTurfCoords, toTurfPointCoords } from '../utils/geo';
 import { RoutePoints } from 'src/types';
+import { PackageStatus } from '@prisma/client';
 
 @Injectable()
 export class SimulationService {
   private readonly logger = new Logger(SimulationService.name);
 
-  // Runs at top of every hour
-  @Cron('0 0 * * * *')
+  // Runs at top of every 2 hours
+  @Cron(CronExpression.EVERY_2_HOURS)
   async handleCron() {
     this.logger.log('Simulation cron running: advancing in-transit deliveries');
     try {
       const deliveries = await prisma.delivery.findMany({
-        where: { status: 'IN_TRANSIT' },
+        where: { status: PackageStatus.IN_TRANSIT },
         include: { routes: true, package: true },
       });
+      if (deliveries.length === 0) {
+        this.logger.log(
+          'No in-transit deliveries found, skipping simulation step',
+        );
+        return;
+      }
+      this.logger.debug(
+        `Found ${deliveries.length} in-transit deliveries to simulate`,
+      );
 
       for (const delivery of deliveries) {
         const route = delivery.routes;

@@ -34,6 +34,13 @@ export class PackageController {
     return this.packageService.findAll();
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Admin()
+  @Get('deliveries')
+  findAllPackageDeliveries() {
+    return this.packageService.findAllDeliveries();
+  }
+
   @Public()
   @Get(':id')
   findOne(@Param('id') packageId: string) {

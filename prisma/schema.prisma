@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// Example model for MongoDB
+model User {
+  id                String            @id @default(auto()) @map("_id") @db.ObjectId
+  name              String?
+  email             String            @unique
+  password          String?
+  role              String?           @default("USER")
+  permissions       String[]
+  otp               String?
+  otpExpires        DateTime?
+  packages          Package[]
+  deliveries        Delivery[]
+  shippingAddresses ShippingAddress[]
+}
+
+model ShippingAddress {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id])
+  label     String
+  address   String
+  default   Boolean  @default(false)
+  city      String
+  state     String
+  zip       String
+  country   String
+  phone1    String
+  phone2    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum PackageStatus {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+  OBSTRUCTED
+}
+
+model Package {
+  id          String        @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  weight      Float
+  content     String
+  images      String[]
+  ownerId     String        @db.ObjectId
+  owner       User          @relation(fields: [ownerId], references: [id])
+  description String
+  status      PackageStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deliveries  Delivery?
+}
+
+model Delivery {
+  id        String        @id @default(auto()) @map("_id") @db.ObjectId
+  packageId String        @unique @db.ObjectId
+  package   Package       @relation(fields: [packageId], references: [id])
+  driverId  String?       @db.ObjectId
+  driver    User?         @relation(fields: [driverId], references: [id])
+  status    PackageStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  routes    Route?
+}
+
+model Route {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  deliveryId  String   @unique @db.ObjectId
+  delivery    Delivery @relation(fields: [deliveryId], references: [id])
+  origin      String
+  destination String
+  /// Detailed route points. JSON array of objects: [{ label: 'A', coords: [lat, lng], durationToNext: 120 }, ...]
+  /// The last point is the destination and may omit `durationToNext`.
+  points      Json
+  distance    Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

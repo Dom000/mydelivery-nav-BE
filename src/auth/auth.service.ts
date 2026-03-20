@@ -5,11 +5,9 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { EmailService } from '../email/email.service';
-
-const prisma = new PrismaClient();
 
 export interface AccessTokenPayload {
   id: string;

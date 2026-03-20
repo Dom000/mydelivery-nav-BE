@@ -3,7 +3,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../prisma/client';
 
 let resendClient: any = null;
 try {
@@ -12,10 +12,9 @@ try {
   const { Resend } = require('resend');
   resendClient = new Resend(process.env.RESEND_API_KEY || '');
 } catch (e) {
-  // noop
+  // eslint-disable-next-line no-console
+  console.error('Failed to initialize Resend client', e);
 }
-
-const prisma = new PrismaClient();
 
 @Injectable()
 export class EmailService {

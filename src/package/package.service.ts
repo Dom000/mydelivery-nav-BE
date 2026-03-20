@@ -81,12 +81,91 @@ export class PackageService {
     return pkg;
   }
 
-  findAll() {
-    return `This action returns all package`;
+  async findAll() {
+    return prisma.package
+      .findMany({
+        include: {
+          deliveries: {
+            include: { routes: true, driver: true },
+          },
+        },
+      })
+      .then((pkgs) =>
+        pkgs.map((p) => ({
+          ...p,
+          id: String(p.id).toUpperCase(),
+        })),
+      );
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} package`;
+  async findOne(id: string) {
+    if (!id) return null;
+
+    const pkg = await prisma.package.findUnique({
+      where: { id },
+      include: {
+        deliveries: {
+          include: { routes: true, driver: true },
+        },
+      },
+    });
+
+    if (!pkg) return null;
+
+    // delivery relation is singular in schema but may be returned as object
+    const delivery = (pkg as any).deliveries || null;
+
+    // prepare route info
+    const route = delivery?.routes || null;
+
+    // compute remaining estimated duration (sum of durationToNext from current point onwards)
+    let remainingSeconds = 0;
+    if (route && Array.isArray(route.points)) {
+      const pts: any[] = route.points as any[];
+
+      // If a currentPoint exists with indexFrom, sum durations from indexFrom to end
+      const currentIndex = route.currentPoint?.indexFrom ?? 0;
+      for (let i = currentIndex; i < pts.length; i++) {
+        const d = Number(pts[i].durationToNext || 0);
+        remainingSeconds += isNaN(d) ? 0 : d;
+      }
+    }
+
+    return {
+      id: pkg.id,
+      name: pkg.name,
+      weight: pkg.weight,
+      content: pkg.content,
+      images: pkg.images,
+      description: pkg.description,
+      status: pkg.status,
+      createdAt: pkg.createdAt,
+      updatedAt: pkg.updatedAt,
+      delivery: delivery
+        ? {
+            id: delivery.id,
+            status: delivery.status,
+            driver: delivery.driver
+              ? {
+                  id: delivery.driver.id,
+                  name: delivery.driver.name,
+                  email: delivery.driver.email,
+                }
+              : null,
+            route: route
+              ? {
+                  id: route.id,
+                  origin: route.origin,
+                  destination: route.destination,
+                  distance: route.distance,
+                  points: route.points,
+                  currentPoint: route.currentPoint,
+                }
+              : null,
+            remainingSeconds,
+          }
+        : null,
+    };
   }
 
   update(id: number, updatePackageDto: UpdatePackageDto) {

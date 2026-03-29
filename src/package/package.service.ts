@@ -5,10 +5,16 @@ import { UpdatePackageDto } from './dto/update-package.dto';
 import { validateRoutePoints } from '../types/schema';
 import { initialActivePointFromPoints } from '../utils/geo';
 import prisma from '../prisma/client';
+import { CloudinaryService } from './cloudinary.service';
 
 @Injectable()
 export class PackageService {
-  async create(createPackageDto: CreatePackageDto) {
+  constructor(private readonly cloudinaryService: CloudinaryService) {}
+
+  async create(
+    createPackageDto: CreatePackageDto,
+    files: Express.Multer.File[] = [],
+  ) {
     // Validate route points at runtime
     try {
       validateRoutePoints(createPackageDto.route.points);
@@ -47,13 +53,19 @@ export class PackageService {
       }
     }
 
+    const uploadedImageUrls = await this.cloudinaryService.uploadImages(files);
+    const imageUrls =
+      uploadedImageUrls.length > 0
+        ? uploadedImageUrls
+        : (createPackageDto.images ?? []);
+
     // Persist package and related delivery/route
     const pkg = await prisma.package.create({
       data: {
         name: createPackageDto.name,
         weight: createPackageDto.weight,
         content: createPackageDto.content,
-        images: createPackageDto.images || [],
+        images: imageUrls,
         ownerId: owner.id,
         description: createPackageDto.description || '',
         status: createPackageDto.status || 'PENDING',

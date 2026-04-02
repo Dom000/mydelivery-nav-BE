@@ -11,6 +11,7 @@ import { orderInTransitTemplate } from './template/order-intransit.email';
 import { orderInterruptedTemplate } from './template/order-interupted.email';
 import { orderDeliveredTemplate } from './template/order-delivered.email';
 import { Resend } from 'resend';
+import { loginOtpTemplate } from './template/login-otp.email';
 
 type DeliveryEmailStatus =
   | 'PENDING'
@@ -213,7 +214,7 @@ export class EmailService {
       const messageId = await this.sendEmail({
         to: email,
         subject: 'Your MyDelivery OTP',
-        html: `<p>Your verification code is <strong>${code}</strong>. It expires in 10 minutes.</p>`,
+        html: loginOtpTemplate(code),
       });
       logger.info('OTP email sent', { to: email, messageId });
     } catch (err) {

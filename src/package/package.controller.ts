@@ -113,7 +113,7 @@ export class PackageController {
   @Admin()
   @Patch(':id')
   update(@Param('id') id: string, @Body() updatePackageDto: UpdatePackageDto) {
-    return this.packageService.update(+id, updatePackageDto);
+    return this.packageService.update(id, updatePackageDto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

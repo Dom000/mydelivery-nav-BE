@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import logger from '../utils/logger';
 import { CreatePackageDto } from './dto/create-package.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
@@ -6,10 +10,15 @@ import { validateRoutePoints } from '../types/schema';
 import { initialActivePointFromPoints } from '../utils/geo';
 import prisma from '../prisma/client';
 import { CloudinaryService } from './cloudinary.service';
+import { EmailService } from 'src/email/email.service';
+import { PackageStatus } from './dto/create-package.dto';
 
 @Injectable()
 export class PackageService {
-  constructor(private readonly cloudinaryService: CloudinaryService) {}
+  constructor(
+    private readonly cloudinaryService: CloudinaryService,
+    private readonly emailService: EmailService,
+  ) {}
 
   async create(
     createPackageDto: CreatePackageDto,
@@ -88,6 +97,22 @@ export class PackageService {
         ) as any,
         distance: createPackageDto.route.distance,
       },
+    });
+
+    await this.emailService.sendOrderStatusEmail({
+      status: (pkg.status as PackageStatus) || PackageStatus.PENDING,
+      orderId: String(pkg.id).toUpperCase(),
+      customerEmail: owner.email,
+      customerName: owner.name || owner.email.split('@')[0],
+      destination: createPackageDto.route.destination,
+      currentLocation: createPackageDto.route.origin,
+      items: [
+        {
+          name: createPackageDto.content || createPackageDto.name,
+          quantity: 1,
+          imageurls: imageUrls,
+        },
+      ],
     });
 
     return pkg;
@@ -213,8 +238,171 @@ export class PackageService {
     };
   }
 
-  update(id: number, updatePackageDto: UpdatePackageDto) {
-    return `This action updates a #${id} package`;
+  async update(id: string, updatePackageDto: UpdatePackageDto) {
+    if (!id) {
+      throw new BadRequestException('Package id is required');
+    }
+
+    const normalizedId = id.toLowerCase();
+
+    const existing = await prisma.package.findUnique({
+      where: { id: normalizedId },
+      include: {
+        deliveries: {
+          include: {
+            routes: true,
+          },
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Package not found');
+    }
+
+    const packageData: Record<string, unknown> = {};
+
+    if (updatePackageDto.name !== undefined)
+      packageData.name = updatePackageDto.name;
+    if (updatePackageDto.weight !== undefined)
+      packageData.weight = updatePackageDto.weight;
+    if (updatePackageDto.content !== undefined)
+      packageData.content = updatePackageDto.content;
+    if (updatePackageDto.images !== undefined)
+      packageData.images = updatePackageDto.images;
+    if (updatePackageDto.description !== undefined)
+      packageData.description = updatePackageDto.description;
+    if (updatePackageDto.status !== undefined)
+      packageData.status = updatePackageDto.status;
+
+    if (updatePackageDto.ownerEmail !== undefined) {
+      let owner = await prisma.user.findUnique({
+        where: { email: updatePackageDto.ownerEmail },
+      });
+
+      if (!owner) {
+        owner = await prisma.user.create({
+          data: {
+            email: updatePackageDto.ownerEmail,
+            role: 'USER',
+            permissions: [],
+            name: updatePackageDto.ownerEmail.split('@')[0],
+          },
+        });
+      }
+
+      packageData.ownerId = owner.id;
+    }
+
+    const routeData: Record<string, unknown> = {};
+
+    if (updatePackageDto.route) {
+      if ((updatePackageDto.route as any).origin !== undefined) {
+        routeData.origin = (updatePackageDto.route as any).origin;
+      }
+
+      if ((updatePackageDto.route as any).destination !== undefined) {
+        routeData.destination = (updatePackageDto.route as any).destination;
+      }
+
+      if ((updatePackageDto.route as any).distance !== undefined) {
+        routeData.distance = Number((updatePackageDto.route as any).distance);
+      }
+
+      if ((updatePackageDto.route as any).points !== undefined) {
+        let validatedPoints;
+
+        try {
+          validatedPoints = validateRoutePoints(
+            (updatePackageDto.route as any).points,
+          );
+        } catch (err) {
+          throw new BadRequestException(
+            'Invalid route points: ' + (err as Error).message,
+          );
+        }
+
+        routeData.points = validatedPoints as any;
+        routeData.currentPoint = initialActivePointFromPoints(
+          validatedPoints as any,
+        ) as any;
+      }
+    }
+
+    const delivery = (existing as any).deliveries || null;
+
+    const updatedPackage = await prisma.$transaction(async (tx) => {
+      const pkg =
+        Object.keys(packageData).length > 0
+          ? await tx.package.update({
+              where: { id: normalizedId },
+              data: packageData as any,
+            })
+          : existing;
+
+      if (Object.keys(routeData).length > 0) {
+        if (!delivery?.routes?.id) {
+          throw new BadRequestException(
+            'Cannot update route because delivery route does not exist',
+          );
+        }
+
+        await tx.route.update({
+          where: { id: delivery.routes.id },
+          data: routeData as any,
+        });
+      }
+
+      if (updatePackageDto.status !== undefined && delivery?.id) {
+        await tx.delivery.update({
+          where: { id: delivery.id },
+          data: { status: updatePackageDto.status },
+        });
+      }
+
+      return pkg;
+    });
+
+    const statusChanged =
+      updatePackageDto.status !== undefined &&
+      updatePackageDto.status !== existing.status;
+
+    if (statusChanged) {
+      const destinationFromUpdate =
+        (updatePackageDto.route as any)?.destination ??
+        (delivery?.routes?.destination as string | undefined) ??
+        'Destination';
+      const originFromUpdate =
+        (updatePackageDto.route as any)?.origin ??
+        (delivery?.routes?.origin as string | undefined) ??
+        'Transit Route';
+
+      const owner = await prisma.user.findUnique({
+        where: { id: existing.ownerId },
+      });
+      const emailToNotify = updatePackageDto.ownerEmail || owner?.email;
+      if (emailToNotify) {
+        await this.emailService.sendOrderStatusEmail({
+          status: updatePackageDto.status as PackageStatus,
+          orderId: String(updatedPackage.id).toUpperCase(),
+          customerEmail: emailToNotify,
+          customerName: owner?.name || undefined,
+          destination: destinationFromUpdate,
+          currentLocation: originFromUpdate,
+        });
+      } else {
+        logger.warn('Skipping status email: owner email missing', {
+          packageId: String(updatedPackage.id),
+          ownerId: existing.ownerId,
+          status: updatePackageDto.status,
+        });
+      }
+    }
+
+    return {
+      ...updatedPackage,
+      id: String(updatedPackage.id).toUpperCase(),
+    };
   }
 
   remove(id: number) {

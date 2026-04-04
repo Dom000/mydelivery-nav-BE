@@ -6,6 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "prebuild": "rimraf dist",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
@@ -26,7 +27,7 @@
     "@nestjs/mapped-types": "*",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
-    "@nestjs/schedule": "^3.0.0",
+    "@nestjs/schedule": "^6.1.1",
     "@prisma/client": "6.19.0",
     "@turf/turf": "^6.5.0",
     "bcryptjs": "^2.4.3",

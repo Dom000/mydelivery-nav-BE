@@ -121,34 +121,57 @@ export class PackageService {
   async findAllDeliveries() {
     const deliveries = await prisma.delivery.findMany({
       include: {
-        package: { include: { owner: true } },
         routes: true,
         driver: true,
       },
     });
 
-    return deliveries.map((d) => ({
-      id: String(d.id).toUpperCase(),
-      status: d.status,
-      package: d.package
-        ? {
-            id: String(d.package.id).toUpperCase(),
-            name: d.package.name,
-            weight: d.package.weight,
-            destination: d.routes?.destination ?? null,
-            owner: d.package.owner
-              ? {
-                  id: String(d.package.owner.id).toUpperCase(),
-                  name: d.package.owner.name,
-                  email: d.package.owner.email,
-                }
-              : null,
-          }
-        : null,
-      driver: d.driver
-        ? { id: String(d.driver.id).toUpperCase(), name: d.driver.name }
-        : null,
-    }));
+    const packageIds = Array.from(new Set(deliveries.map((d) => d.packageId)));
+
+    const packages = packageIds.length
+      ? await prisma.package.findMany({
+          where: { id: { in: packageIds } },
+        })
+      : [];
+
+    const ownerIds = Array.from(new Set(packages.map((pkg) => pkg.ownerId)));
+
+    const owners = ownerIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: ownerIds } },
+        })
+      : [];
+
+    const packageById = new Map(packages.map((p) => [p.id, p]));
+    const ownerById = new Map(owners.map((o) => [o.id, o]));
+
+    return deliveries.map((d) => {
+      const pkg = packageById.get(d.packageId);
+      const owner = pkg ? ownerById.get(pkg.ownerId) : null;
+
+      return {
+        id: String(d.id).toUpperCase(),
+        status: d.status,
+        package: pkg
+          ? {
+              id: String(pkg.id).toUpperCase(),
+              name: pkg.name,
+              weight: pkg.weight,
+              destination: d.routes?.destination ?? null,
+              owner: owner
+                ? {
+                    id: String(owner.id).toUpperCase(),
+                    name: owner.name,
+                    email: owner.email,
+                  }
+                : null,
+            }
+          : null,
+        driver: d.driver
+          ? { id: String(d.driver.id).toUpperCase(), name: d.driver.name }
+          : null,
+      };
+    });
   }
 
   async findAll() {

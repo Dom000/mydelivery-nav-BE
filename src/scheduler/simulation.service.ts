@@ -1,155 +1,184 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import prisma from '../prisma/client';
-import {
-  lineString,
-  point as turfPoint,
-  distance as turfDistance,
-  length as turfLength,
-} from '@turf/turf';
-import { fromTurfCoords, toTurfPointCoords } from '../utils/geo';
-import { RoutePoints } from 'src/types';
 import { PackageStatus } from '@prisma/client';
+import { point as turfPoint, distance as turfDistance } from '@turf/turf';
+import prisma from '../prisma/client';
+import { toTurfPointCoords } from '../utils/geo';
+import { RoutePoints } from 'src/types';
 
 @Injectable()
 export class SimulationService {
   private readonly logger = new Logger(SimulationService.name);
 
-  // Runs at top of every 2 hours
   @Cron(CronExpression.EVERY_2_HOURS)
   async handleCron() {
     this.logger.log('Simulation cron running: advancing in-transit deliveries');
+
     try {
       const deliveries = await prisma.delivery.findMany({
         where: { status: PackageStatus.IN_TRANSIT },
         include: { routes: true, package: true },
       });
+
       if (deliveries.length === 0) {
         this.logger.log(
           'No in-transit deliveries found, skipping simulation step',
         );
         return;
       }
+
       this.logger.debug(
         `Found ${deliveries.length} in-transit deliveries to simulate`,
       );
 
+      const now = Date.now();
+
       for (const delivery of deliveries) {
         const route = delivery.routes;
         if (!route || !route.points) continue;
+
         const points: RoutePoints = route.points as any;
         if (!Array.isArray(points) || points.length === 0) continue;
 
-        // Build line coords in turf order [lng,lat]
-        const coords = points.map((p) => toTurfPointCoords(p.coords));
-        const line = lineString(coords as any);
-        const totalKm = turfLength(line, { units: 'kilometers' });
+        if (points.length === 1) {
+          const last = points[0];
 
-        // Determine current position
-        let currentCoords: [number, number] | null = null;
-        if (route.currentPoint && (route.currentPoint as any).coords) {
-          currentCoords = (route.currentPoint as any).coords as [
-            number,
-            number,
-          ];
-        } else {
-          // default to first point
-          currentCoords = points[0].coords as [number, number];
+          await prisma.route.update({
+            where: { id: route.id },
+            data: {
+              currentPoint: {
+                between: [last.label, last.label],
+                coords: last.coords,
+                indexFrom: 0,
+                indexTo: 0,
+              } as any,
+            },
+          });
+
+          await prisma.delivery.update({
+            where: { id: delivery.id },
+            data: { status: PackageStatus.DELIVERED },
+          });
+          await prisma.package.update({
+            where: { id: delivery.packageId },
+            data: { status: PackageStatus.DELIVERED },
+          });
+
+          continue;
         }
 
-        // Find nearest segment by comparing distance to segment midpoints
-        let bestIndex = 0;
-        let bestDist = Infinity;
-        for (let i = 0; i < points.length - 1; i++) {
-          const a = points[i].coords as [number, number];
-          const b = points[i + 1].coords as [number, number];
-          const midTurf = turfPoint(
-            toTurfPointCoords([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]),
-          );
-          const curTurf = turfPoint(toTurfPointCoords(currentCoords));
-          const d = turfDistance(curTurf, midTurf, { units: 'kilometers' });
-          if (d < bestDist) {
-            bestDist = d;
-            bestIndex = i;
-          }
-        }
-
-        // Compute fraction along the current segment
-        const start = points[bestIndex].coords as [number, number];
-        const end = points[bestIndex + 1].coords as [number, number];
-        const segLine = lineString([
-          toTurfPointCoords(start),
-          toTurfPointCoords(end),
-        ] as any);
-        const segKm = turfLength(segLine, { units: 'kilometers' });
-        const curKm = turfDistance(
-          turfPoint(toTurfPointCoords(start)),
-          turfPoint(toTurfPointCoords(currentCoords)),
-          { units: 'kilometers' },
-        );
-        const frac = segKm > 0 ? Math.min(1, Math.max(0, curKm / segKm)) : 0;
-
-        // Update durations: remaining durationToNext for current segment = original * (1 - frac)
-        const updatedPoints = points.map((p) => ({ ...p }));
-        const originalDuration = Number(
-          updatedPoints[bestIndex].durationToNext || 0,
-        );
-        const remaining = Math.max(
+        const elapsedSeconds = Math.max(
           0,
-          Math.round(originalDuration * (1 - frac)),
+          Math.floor((now - new Date(route.updatedAt).getTime()) / 1000),
         );
-        updatedPoints[bestIndex].durationToNext = remaining;
+        if (elapsedSeconds === 0) continue;
 
-        // If we've passed the segment (frac >= 1 or remaining === 0), advance currentPoint to next segment midpoint
+        const updatedPoints = points.map((p) => ({ ...p }));
+        const clampIndex = Math.max(0, points.length - 2);
+        let currentIndex = Math.min(
+          Math.max((route.currentPoint as any)?.indexFrom ?? 0, 0),
+          clampIndex,
+        );
+        let currentCoords = ((route.currentPoint as any)?.coords ??
+          points[currentIndex].coords) as [number, number];
+        let remainingSeconds = elapsedSeconds;
         let newCurrentPoint: any = route.currentPoint;
-        if (frac >= 1 || remaining === 0) {
-          if (bestIndex + 1 < points.length - 1) {
-            // move to midpoint of next segment
-            const ns = points[bestIndex + 1].coords as [number, number];
-            const ne = points[bestIndex + 2].coords as [number, number];
-            const midLat = (ns[0] + ne[0]) / 2;
-            const midLng = (ns[1] + ne[1]) / 2;
+
+        while (remainingSeconds > 0 && currentIndex < points.length - 1) {
+          const start = points[currentIndex].coords as [number, number];
+          const end = points[currentIndex + 1].coords as [number, number];
+
+          const segKm = turfDistance(
+            turfPoint(toTurfPointCoords(start)),
+            turfPoint(toTurfPointCoords(end)),
+            { units: 'kilometers' },
+          );
+          const curKm = turfDistance(
+            turfPoint(toTurfPointCoords(start)),
+            turfPoint(toTurfPointCoords(currentCoords)),
+            { units: 'kilometers' },
+          );
+
+          const currentFrac =
+            segKm > 0 ? Math.min(1, Math.max(0, curKm / segKm)) : 0;
+          const originalDuration = Number(
+            updatedPoints[currentIndex].durationToNext || 0,
+          );
+
+          if (originalDuration <= 0) {
+            updatedPoints[currentIndex].durationToNext = 0;
+            currentCoords = end;
+            currentIndex += 1;
+            continue;
+          }
+
+          const secondsLeftOnSegment = Math.max(
+            0,
+            Math.round(originalDuration * (1 - currentFrac)),
+          );
+
+          if (remainingSeconds >= secondsLeftOnSegment) {
+            remainingSeconds -= secondsLeftOnSegment;
+            updatedPoints[currentIndex].durationToNext = 0;
+            currentCoords = end;
+            currentIndex += 1;
+
+            if (currentIndex >= points.length - 1) {
+              const last = points[points.length - 1];
+              newCurrentPoint = {
+                between: [last.label, last.label],
+                coords: last.coords,
+                indexFrom: points.length - 1,
+                indexTo: points.length - 1,
+              };
+
+              await prisma.delivery.update({
+                where: { id: delivery.id },
+                data: { status: PackageStatus.DELIVERED },
+              });
+              await prisma.package.update({
+                where: { id: delivery.packageId },
+                data: { status: PackageStatus.DELIVERED },
+              });
+              break;
+            }
+
             newCurrentPoint = {
               between: [
-                points[bestIndex + 1].label,
-                points[bestIndex + 2].label,
+                points[currentIndex].label,
+                points[currentIndex + 1].label,
               ],
-              coords: [midLat, midLng],
-              indexFrom: bestIndex + 1,
-              indexTo: bestIndex + 2,
+              coords: points[currentIndex].coords,
+              indexFrom: currentIndex,
+              indexTo: currentIndex + 1,
             };
-          } else {
-            // reached final destination; set to last point coords
-            const last = points[points.length - 1];
-            newCurrentPoint = {
-              between: [last.label, last.label],
-              coords: last.coords,
-              indexFrom: points.length - 1,
-              indexTo: points.length - 1,
-            };
-            // mark delivery/package as delivered
-            await prisma.delivery.update({
-              where: { id: delivery.id },
-              data: { status: 'DELIVERED' },
-            });
-            await prisma.package.update({
-              where: { id: delivery.packageId },
-              data: { status: 'DELIVERED' },
-            });
+            continue;
           }
-        } else {
-          // set currentPoint to the interpolated point along segment
-          const interpLat = start[0] + (end[0] - start[0]) * frac;
-          const interpLng = start[1] + (end[1] - start[1]) * frac;
+
+          const advancedFrac = Math.min(
+            1,
+            currentFrac + remainingSeconds / originalDuration,
+          );
+          const interpLat = start[0] + (end[0] - start[0]) * advancedFrac;
+          const interpLng = start[1] + (end[1] - start[1]) * advancedFrac;
+
+          updatedPoints[currentIndex].durationToNext = Math.max(
+            0,
+            Math.round(originalDuration * (1 - advancedFrac)),
+          );
+
           newCurrentPoint = {
-            between: [points[bestIndex].label, points[bestIndex + 1].label],
+            between: [
+              points[currentIndex].label,
+              points[currentIndex + 1].label,
+            ],
             coords: [interpLat, interpLng],
-            indexFrom: bestIndex,
-            indexTo: bestIndex + 1,
+            indexFrom: currentIndex,
+            indexTo: currentIndex + 1,
           };
+          remainingSeconds = 0;
         }
 
-        // Persist updates
         await prisma.route.update({
           where: { id: route.id },
           data: {
@@ -157,8 +186,9 @@ export class SimulationService {
             currentPoint: newCurrentPoint as any,
           },
         });
+
         this.logger.debug(
-          `Updated route ${route.id}: bestIndex=${bestIndex} frac=${frac.toFixed(3)} remaining=${remaining}`,
+          `Updated route ${route.id}: currentIndex=${newCurrentPoint?.indexFrom ?? 0} elapsedSeconds=${elapsedSeconds}`,
         );
       }
     } catch (err) {

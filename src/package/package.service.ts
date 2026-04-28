@@ -152,11 +152,14 @@ export class PackageService {
       return {
         id: String(d.id).toUpperCase(),
         status: d.status,
+
         package: pkg
           ? {
               id: String(pkg.id).toUpperCase(),
+              createdAt: pkg.createdAt,
               name: pkg.name,
               weight: pkg.weight,
+              origin: d.routes?.origin ?? null,
               destination: d.routes?.destination ?? null,
               owner: owner
                 ? {
